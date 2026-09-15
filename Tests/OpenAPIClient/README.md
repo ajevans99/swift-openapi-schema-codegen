@@ -5,6 +5,10 @@ in addition to Swift. These are available on the CI runners; minimal Linux
 containers may need `curl` installed separately.
 The smoke harness defaults to four concurrent build jobs to bound SwiftSyntax
 compiler resource use. Set `SWIFT_JOBS` to another positive integer if needed.
+It builds the consumer with SwiftPM, then launches the resulting executable
+directly. On the macOS 15 / Swift 6.1.3 runner, `swift run` was killed at launch
+while the unchanged, validly ad-hoc-signed executable passed all assertions when
+launched separately. The harness does not retry or suppress consumer failures.
 
 Run from the repository root:
 

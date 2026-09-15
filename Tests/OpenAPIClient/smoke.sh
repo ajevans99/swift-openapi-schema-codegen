@@ -32,5 +32,8 @@ bin="$(swift build --package-path "$root" --show-bin-path)/openapi-json-codegen"
 "$bin" "$corpus" --report --check-models \
   --operation listModels --operation retrieveModel \
   > "$root/.build/openapi-corpus/models-compatibility.tsv"
-swift run --package-path "$work" --jobs "$jobs" Consumer
+# Launch separately from SwiftPM's process on macOS; execute every consumer assertion.
+swift build --package-path "$work" --jobs "$jobs" --product Consumer
+consumer="$(swift build --package-path "$work" --show-bin-path)/Consumer"
+"$consumer"
 echo "Generated public API consumer passed."
