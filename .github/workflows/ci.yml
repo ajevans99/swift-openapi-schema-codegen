@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Swift 6.1 / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, ubuntu-24.04]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: swift-actions/setup-swift@7ca6abe6b3b0e8b5421b88be48feee39cbf52c6a # v2
+        with:
+          swift-version: "6.1.3"
+      - name: Unit tests with remote dependencies
+        run: |
+          swift --version
+          swift test --jobs 4
+      - name: Fetch checksum-pinned acceptance corpus
+        run: bash Tests/OpenAPIClient/fetch-openai.sh
+      - name: Generate and run cross-module authored and OpenAI consumers
+        run: bash Tests/OpenAPIClient/smoke.sh
+      - name: Retain bounded compatibility reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: compatibility-${{ matrix.os }}
+          path: .build/openapi-corpus/*compatibility.tsv
+          if-no-files-found: ignore

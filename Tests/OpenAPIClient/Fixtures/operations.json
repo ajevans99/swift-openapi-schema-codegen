@@ -1,0 +1,84 @@
+{
+  "openapi": "3.1.0",
+  "info": {"title": "Authored JSON integration fixture", "version": "1"},
+  "servers": [{"url": "https://example.test/v1"}],
+  "security": [{"Bearer": []}, {"APIKey": []}],
+  "paths": {
+    "/widgets/{id}": {
+      "parameters": [
+        {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}},
+        {"name": "limit", "in": "query", "schema": {"type": "integer", "minimum": 1}}
+      ],
+      "post": {
+        "operationId": "createWidget",
+        "parameters": [
+          {"name": "limit", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 5}},
+          {"name": "tags", "in": "query", "style": "form", "explode": true, "schema": {"type": "array", "items": {"type": "string"}}},
+          {"name": "codes", "in": "query", "style": "pipeDelimited", "explode": false, "schema": {"type": "array", "items": {"type": "integer"}}}
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Submission"}}}
+        },
+        "responses": {
+          "2XX": {"description": "Other success", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Submission"}}}},
+          "200": {"description": "Created", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Submission"}}}},
+          "204": {"description": "No body"},
+          "default": {"description": "Failure", "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Failure"}}}}
+        }
+      }
+    },
+    "/optional": {
+      "post": {
+        "operationId": "optionalBody",
+        "security": [],
+        "requestBody": {"content": {"application/json": {"schema": {"type": ["string", "null"]}}}},
+        "responses": {"204": {"description": "OK"}}
+      }
+    },
+    "/events": {
+      "get": {
+        "operationId": "events",
+        "responses": {"200": {"description": "SSE", "content": {"text/event-stream": {"schema": {"type": "string"}}}}}
+      }
+    },
+    "/upload": {
+      "post": {
+        "operationId": "upload",
+        "requestBody": {"content": {"multipart/form-data": {"schema": {"type": "object"}}}},
+        "responses": {"200": {"description": "Binary", "content": {"application/octet-stream": {"schema": {"type": "string", "format": "binary"}}}}}
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "Bearer": {"type": "http", "scheme": "bearer"},
+      "APIKey": {"type": "apiKey", "in": "header", "name": "X-API-Key"}
+    },
+    "schemas": {
+      "Submission": {
+        "type": "object",
+        "properties": {
+          "display-name": {"type": "string", "minLength": 1},
+          "state": {"type": "string", "enum": ["ready", "caf\u00e9", "cafe\u0301"]},
+          "reason": {"type": ["string", "null"]},
+          "comment": {"type": ["string", "null"]},
+          "mode": {"$ref": "#/components/schemas/Mode"},
+          "payload": {}
+        },
+        "required": ["display-name", "state", "reason", "mode", "payload"],
+        "additionalProperties": {"type": ["string", "null"]}
+      },
+      "Mode": {
+        "oneOf": [
+          {"type": "object", "properties": {"kind": {"const": "text", "type": "string"}, "text": {"type": "string"}}, "required": ["kind", "text"], "additionalProperties": false},
+          {"type": "object", "properties": {"kind": {"const": "flag", "type": "string"}, "enabled": {"type": "boolean"}}, "required": ["kind", "enabled"], "additionalProperties": false}
+        ]
+      },
+      "Failure": {
+        "type": "object", "properties": {"message": {"type": "string"}, "code": {"type": "integer"}},
+        "required": ["message", "code"], "additionalProperties": false
+      }
+    }
+  }
+}
