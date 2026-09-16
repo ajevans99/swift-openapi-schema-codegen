@@ -1,4 +1,5 @@
 import contextlib
+import copy
 import io
 import json
 from pathlib import Path
@@ -124,6 +125,46 @@ class ProvenanceTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(ValueError, "checkout is modified"):
                 self.snapshot()
+
+    def test_each_graph_uses_its_own_transitive_lock(self):
+        def syntax(path, version):
+            path.mkdir(parents=True)
+            return {
+                "identity": "swift-syntax", "path": str(path), "version": version,
+                "url": "https://example.test/swift-syntax.git", "dependencies": [],
+            }
+        def add_pin(lock, version):
+            data = json.loads(lock.read_text())
+            data["pins"].append({
+                "identity": "swift-syntax", "kind": "remoteSourceControl",
+                "location": "https://example.test/swift-syntax.git",
+                "state": {"version": version, "revision": "release"},
+            })
+            lock.write_text(json.dumps(data))
+        consumer = self.root / ".build/responses-consumer"
+        consumer.mkdir(parents=True)
+        consumer_lock = consumer / "Package.resolved"
+        consumer_lock.write_bytes((self.root / "Package.resolved").read_bytes())
+        consumer_nodes = copy.deepcopy(self.nodes)
+        self.nodes.append(syntax(self.root / ".build/checkouts/swift-syntax", "603.0.2"))
+        consumer_nodes.append(syntax(consumer / ".build/checkouts/swift-syntax", "604.0.0"))
+        add_pin(self.root / "Package.resolved", "603.0.2")
+        add_pin(consumer_lock, "604.0.0")
+        self.save_graph()
+        consumer_graph = consumer / "graph.json"
+        consumer_graph.write_text(json.dumps({
+            "identity": "consumer", "path": str(consumer), "dependencies": consumer_nodes,
+        }))
+        result = provenance.snapshot(self.root, [self.graph, consumer_graph], None)
+        self.assertEqual(len(result["lockfiles"]), 2)
+        self.assertEqual(
+            {entry["version"] for entry in result["dependencies"].values()
+             if entry["identity"] == "swift-syntax"},
+            {"603.0.2", "604.0.0"},
+        )
+        add_pin(consumer_lock, "603.0.2")
+        with self.assertRaisesRegex(ValueError, "does not match released"):
+            provenance.snapshot(self.root, [self.graph, consumer_graph], None)
 
 
 if __name__ == "__main__":

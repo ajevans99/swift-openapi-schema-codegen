@@ -16,13 +16,19 @@ def git(path, *arguments):
 
 
 def snapshot(root, graphs, artifact):
-    pins = {
-        entry["identity"]: entry
-        for entry in json.loads((root / "Package.resolved").read_text())["pins"]
-    }
+    shared_identities = {"swift-json-schema", "swift-json-schema-codegen", "swift-openapi-schema"}
     packages = {"generator": root}
     dependencies = {}
+    locks = {}
+    shared_versions = {}
     for graph in graphs:
+        tree = json.loads(graph.read_text())
+        lock = Path(tree["path"]).resolve(strict=True) / "Package.resolved"
+        locks[str(lock)] = digest(lock)
+        pins = {
+            entry["identity"]: entry
+            for entry in json.loads(lock.read_text())["pins"]
+        }
         def visit(node):
             path = Path(node["path"]).resolve(strict=True)
             identity = node["identity"]
@@ -42,13 +48,16 @@ def snapshot(root, graphs, artifact):
                     "identity": identity, "version": node["version"],
                     "revision": pin["state"]["revision"], "url": node["url"],
                 }
-                if identity in {"swift-json-schema", "swift-json-schema-codegen", "swift-openapi-schema"}:
+                if identity in shared_identities:
+                    version = (node["version"], pin["state"]["revision"])
+                    if shared_versions.setdefault(identity, version) != version:
+                        raise ValueError(f"Generator/consumer dependency mismatch: {identity}")
                     packages[key] = path
             for child in node["dependencies"]:
                 visit(child)
-        visit(json.loads(graph.read_text()))
+        visit(tree)
     identities = {entry["identity"] for entry in dependencies.values()}
-    if not {"swift-json-schema", "swift-json-schema-codegen", "swift-openapi-schema"} <= identities:
+    if not shared_identities <= identities:
         raise ValueError("Missing required released dependencies in graph.")
     files = {}
     for label, package in packages.items():
@@ -67,6 +76,7 @@ def snapshot(root, graphs, artifact):
     return {
         "generator_revision": git(root, "rev-parse", "HEAD"),
         "files": files,
+        "lockfiles": locks,
         "dependencies": dependencies,
         "artifact": None if artifact is None else {
             "path": str(artifact.resolve(strict=True)),

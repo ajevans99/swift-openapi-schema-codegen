@@ -46,7 +46,10 @@ includes the strict-2020-12 projection parity correction, not 2019-09 recursion.
 The pristine profile generates and the actual recording consumer **passes**
 with all development overrides unset. Both dependency graphs resolve the
 released versions above; their checkout revisions and clean source bytes are
-checked against the lockfile, then fingerprinted before and after execution.
+checked against each graph's own lockfile, then fingerprinted before and after
+execution. Independent consumer resolution can select another compatible
+SwiftSyntax version; the generator/runtime/importer release revisions must
+agree across both graphs.
 Local validation used Apple Swift 6.4/macOS with normal compiler flags.
 
 | Measurement | Result |
@@ -71,7 +74,7 @@ The profile SHA-256 remains
 `1803bc8ac09aece484b9442173b91a69bf16c18815999c2b154d47d63b77a929`.
 The reviewed closed-object preservation fix intentionally changes generated
 bytes from the historical development artifact below. All 33 package tests,
-nine Python harness guards, and the prior authored/Models/profile consumer pass
+ten Python harness guards, and the prior authored/Models/profile consumer pass
 with released dependencies. Keep release-run provenance and metrics separate
 from historical files.
 
