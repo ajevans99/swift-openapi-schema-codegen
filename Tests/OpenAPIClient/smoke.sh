@@ -21,6 +21,8 @@ work="$root/.build/openapi-consumer"
 mkdir -p "$work/Sources/GeneratedAPI" "$work/Sources/Consumer"
 cp "$root/Tests/OpenAPIClient/Consumer/Package.swift" "$work/Package.swift"
 cp "$root/Tests/OpenAPIClient/Consumer/main.swift" "$work/Sources/Consumer/main.swift"
+cp "$root/Tests/OpenAPIClient/Consumer/Profile.swift" "$work/Sources/Consumer/Profile.swift"
+cp "$root/Tests/OpenAPIClient/Consumer/Support.swift" "$work/Sources/Consumer/Support.swift"
 swift build --package-path "$root" --jobs "$jobs" --product openapi-json-codegen
 bin="$(swift build --package-path "$root" --show-bin-path)/openapi-json-codegen"
 "$bin" "$root/Tests/OpenAPIClient/Fixtures/operations.json" \
@@ -28,6 +30,10 @@ bin="$(swift build --package-path "$root" --show-bin-path)/openapi-json-codegen"
   --output "$work/Sources/GeneratedAPI/Authored.swift"
 "$bin" "$corpus" --operation listModels --operation retrieveModel --namespace OpenAI \
   --output "$work/Sources/GeneratedAPI/OpenAI.swift"
+"$bin" "$root/Tests/OpenAPIClient/Fixtures/profile-operation.json" \
+  --operation createMessage --operation fallbackMessage \
+  --profile "$root/Tests/OpenAPIClient/Fixtures/authored-profile.json" \
+  --namespace Profiled --output "$work/Sources/GeneratedAPI/Profiled.swift"
 "$bin" "$corpus" --report > "$root/.build/openapi-corpus/compatibility.tsv"
 "$bin" "$corpus" --report --check-models \
   --operation listModels --operation retrieveModel \

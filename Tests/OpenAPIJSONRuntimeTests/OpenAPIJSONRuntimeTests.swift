@@ -206,3 +206,92 @@ private struct Credentials: JSONCredentialProvider {
   task.cancel()
   await #expect(throws: CancellationError.self) { try await task.value }
 }
+
+private enum BodyProbeError: Error { case read }
+
+private actor BodyProbe {
+  private(set) var reads = 0
+  func read() throws -> ArraySlice<UInt8>? {
+    reads += 1
+    throw BodyProbeError.read
+  }
+}
+
+private struct UnreadBodyTransport: ClientTransport {
+  let probe: BodyProbe
+  let contentType: String
+  var cancelAfterHeaders = false
+
+  func send(_ request: HTTPRequest, body: HTTPBody?, baseURL: URL, operationID: String) async throws
+    -> (HTTPResponse, HTTPBody?)
+  {
+    if cancelAfterHeaders {
+      withUnsafeCurrentTask { $0?.cancel() }
+    }
+    let stream = AsyncThrowingStream<ArraySlice<UInt8>, any Error>(unfolding: {
+      try await probe.read()
+    })
+    return (
+      HTTPResponse(status: .ok, headerFields: [.contentType: contentType]),
+      HTTPBody(stream, length: .unknown, iterationBehavior: .single)
+    )
+  }
+}
+
+@Test func responseValidationRunsBeforeRequestingAnyBodyChunks() async throws {
+  let probe = BodyProbe()
+  let client = try JSONClient(
+    serverURL: #require(URL(string: "https://example.test")),
+    transport: UnreadBodyTransport(probe: probe, contentType: "text/event-stream"))
+  let operation = JSONOperation(id: "profiled", method: .post, path: "/messages")
+  await #expect(throws: JSONClientError.unexpectedContentType("text/event-stream")) {
+    try await client.send(
+      operation,
+      validateResponse: {
+        try JSONResponse.validateContentType($0.headerFields)
+      })
+  }
+  let readsBeforeCollection = await probe.reads
+  expectNoDifference(readsBeforeCollection, 0)
+
+  // Without the opt-in hook, send still leaves media policy to the decoder.
+  await #expect(throws: BodyProbeError.read) {
+    try await client.send(operation)
+  }
+  let readsAfterCollection = await probe.reads
+  expectNoDifference(readsAfterCollection, 1)
+}
+
+@Test func acceptedResponseHeadersStillPropagateBodyErrors() async throws {
+  let probe = BodyProbe()
+  let client = try JSONClient(
+    serverURL: #require(URL(string: "https://example.test")),
+    transport: UnreadBodyTransport(
+      probe: probe, contentType: "APPLICATION/PROBLEM+JSON; charset=utf-8"))
+  await #expect(throws: BodyProbeError.read) {
+    try await client.send(
+      JSONOperation(id: "profiled", method: .get, path: "/"),
+      validateResponse: {
+        try JSONResponse.validateContentType(
+          $0.headerFields, mediaTypes: ["application/problem+json"])
+      })
+  }
+  let reads = await probe.reads
+  expectNoDifference(reads, 1)
+}
+
+@Test func cancellationAfterHeadersPrecedesProfileValidation() async throws {
+  let probe = BodyProbe()
+  let client = try JSONClient(
+    serverURL: #require(URL(string: "https://example.test")),
+    transport: UnreadBodyTransport(
+      probe: probe, contentType: "text/event-stream", cancelAfterHeaders: true))
+  let task = Task {
+    try await client.send(
+      JSONOperation(id: "cancelled", method: .get, path: "/"),
+      validateResponse: { try JSONResponse.validateContentType($0.headerFields) })
+  }
+  await #expect(throws: CancellationError.self) { try await task.value }
+  let reads = await probe.reads
+  expectNoDifference(reads, 0)
+}

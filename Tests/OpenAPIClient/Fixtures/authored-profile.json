@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "operations": {
+    "fallbackMessage": {
+      "responseMediaType": "application/json"
+    },
+    "createMessage": {
+      "requestMediaType": "application/json",
+      "responseMediaType": "application/json",
+      "requestConstraint": {"properties": {"stream": {"const": false}}}
+    }
+  }
+}

@@ -41,14 +41,17 @@ public struct OpenAPICodegenOptions: Sendable {
   public var namespace: String
   public var legacyNullable: LegacyNullablePolicy
   public var recursiveObjects: RecursiveObjectStrategy
+  public var profile: OpenAPIOperationProfile?
 
   public init(
     namespace: String = "API", legacyNullable: LegacyNullablePolicy = .reject,
-    recursiveObjects: RecursiveObjectStrategy = .valueTypes
+    recursiveObjects: RecursiveObjectStrategy = .valueTypes,
+    profile: OpenAPIOperationProfile? = nil
   ) {
     self.namespace = namespace
     self.legacyNullable = legacyNullable
     self.recursiveObjects = recursiveObjects
+    self.profile = profile
   }
 }
 
@@ -78,6 +81,8 @@ struct OperationPlan {
   var parameters: [Parameter] = []
   var bodyRoot: String?
   var bodyMediaType: String?
+  var requestConstraint: JSONValue?
+  var isProfiled = false
   var responses: [Response] = []
   var securitySource = "[]"
   var roots: [(name: String, pointer: String)] = []
@@ -116,11 +121,24 @@ public struct OpenAPICodeGenerator: Sendable {
   func plan(
     _ document: OpenAPIJSONDocument, operationIDs: [String]?
   ) throws -> (operations: [OperationPlan], diagnostics: [OpenAPICodegenDiagnostic]) {
+    try options.profile?.validate()
     let catalog = try document.operations()
     let ids = catalog.map { $0.operationID ?? $0.method.uppercased() + " " + $0.path }
-    let names = SwiftNames.allocate(ids, reserved: SwiftNames.operationReserved)
+    let names = SwiftNames.allocate(
+      ids,
+      reserved: options.profile == nil
+        ? SwiftNames.operationReserved
+        : SwiftNames.operationReserved.union(["RuntimeComponent", "HTTPResponse"]))
     var diagnostics: [OpenAPICodegenDiagnostic] = []
     var operations: [OperationPlan] = []
+    for id in (options.profile?.operations.keys.sorted() ?? []) {
+      if !ids.contains(id) {
+        diagnostics.append(
+          .init(
+            severity: .error, operationID: id, pointer: "/operations/" + escapePointer(id),
+            message: "Profile operation does not exist in the document."))
+      }
+    }
     if let selected = operationIDs {
       for id in selected where !ids.contains(id) {
         diagnostics.append(
@@ -138,6 +156,10 @@ public struct OpenAPICodeGenerator: Sendable {
           .init(severity: severity, operationID: id, pointer: pointer, message: message))
       }
       var result = OperationPlan(view: view, id: id, name: names[index])
+      let profile = options.profile?.operations[id]
+      result.requestConstraint = profile?.requestConstraint
+      result.isProfiled = profile != nil
+      var selectedSchemas = view.parameters.compactMap(\.schema)
       for key in (view.source.value.object ?? [:]).keys where key.hasPrefix("x-") {
         emit(
           view.source.location.pointer + "/" + escapePointer(key),
@@ -227,16 +249,29 @@ public struct OpenAPICodeGenerator: Sendable {
         emit(view.pathItem.location.pointer, "Malformed or unsafe path template.")
       }
       if let body = view.requestBody {
+        if profile != nil && profile?.requestMediaType == nil {
+          emit(
+            body.target.location.pointer,
+            "Profile must explicitly select the request media and constraint.")
+        }
         if body.content.isEmpty {
           emit(
             body.target.location.pointer + "/content", "Request bodies require one JSON media type."
           )
         }
-        if let media = jsonMedia(body.content, emit: emit), let schema = media.schema {
+        if let media = jsonMedia(
+          body.content, selected: profile?.requestMediaType,
+          pointer: body.target.location.pointer + "/content", emit: emit
+        ), let schema = media.schema {
           result.bodyRoot = "\(result.name)Body"
           result.bodyMediaType = media.mediaType
           result.roots.append((result.bodyRoot!, schema.location.pointer))
+          selectedSchemas.append(schema)
         }
+      } else if profile?.requestMediaType != nil {
+        emit(
+          view.source.location.pointer,
+          "Profile selects request media for an operation without a request body.")
       }
       for response in view.responses {
         let status = response.status
@@ -248,11 +283,15 @@ public struct OpenAPICodeGenerator: Sendable {
         if response.content.isEmpty {
           result.responses.append(
             .init(view: response, root: nil, caseName: caseName, mediaType: nil))
-        } else if let media = jsonMedia(response.content, emit: emit), let schema = media.schema {
+        } else if let media = jsonMedia(
+          response.content, selected: profile?.responseMediaType,
+          pointer: response.target.location.pointer + "/content", emit: emit
+        ), let schema = media.schema {
           let root = "\(result.name)Response\(status == "default" ? "Default" : status)"
           result.responses.append(
             .init(view: response, root: root, caseName: caseName, mediaType: media.mediaType))
           result.roots.append((root, schema.location.pointer))
+          selectedSchemas.append(schema)
         }
         if response.target.value.object?["headers"]?.object?.isEmpty == false {
           emit(
@@ -269,12 +308,19 @@ public struct OpenAPICodeGenerator: Sendable {
       if result.responses.isEmpty {
         emit(view.source.location.pointer + "/responses", "No supported responses.")
       }
+      if profile != nil && view.responses.allSatisfy({ $0.content.isEmpty }) {
+        emit(
+          view.source.location.pointer + "/responses",
+          "Profile selects response media for an operation with only bodyless responses.")
+      }
       result.securitySource = security(view.security, document: document, emit: emit)
       var visited = Set<String>()
       let schemas =
-        view.parameters.compactMap(\.schema)
-        + (view.requestBody?.content.compactMap(\.schema) ?? [])
-        + view.responses.flatMap { $0.content.compactMap(\.schema) }
+        profile == nil
+        ? view.parameters.compactMap(\.schema)
+          + (view.requestBody?.content.compactMap(\.schema) ?? [])
+          + view.responses.flatMap { $0.content.compactMap(\.schema) }
+        : selectedSchemas
       for schema in schemas {
         if schema.location.sourceURI != document.sourceURI {
           emit(
@@ -308,13 +354,24 @@ public struct OpenAPICodeGenerator: Sendable {
 
   private func jsonMedia(
     _ media: [OpenAPIMediaTypeView],
+    selected: String? = nil, pointer: String,
     emit: (String, String, OpenAPICodegenDiagnostic.Severity) -> Void
   ) -> OpenAPIMediaTypeView? {
+    if let selected {
+      guard let choice = media.first(where: { $0.mediaType == selected }) else {
+        emit(pointer, "Profile selects undeclared media type '\(selected)'.", .error)
+        return nil
+      }
+      for value in media where value.mediaType != selected {
+        emit(
+          value.source.location.pointer,
+          "Excluded from this explicit JSON client profile; the original declaration is unchanged.",
+          .warning)
+      }
+      return jsonMedia([choice], pointer: pointer, emit: emit)
+    }
     for value in media {
-      let type = value.mediaType.lowercased()
-      if !(type == "application/json"
-        || (type.hasPrefix("application/") && type.hasSuffix("+json")))
-      {
+      if !isJSONMediaType(value.mediaType) {
         emit(
           value.source.location.pointer,
           "Unsupported content type '\(value.mediaType)' (JSON only).", .error)
@@ -388,6 +445,12 @@ public struct OpenAPICodeGenerator: Sendable {
       emit(
         pointer + "/discriminator",
         "Discriminator retained as metadata; oneOf/anyOf validation is unchanged.", .warning)
+    }
+    for keyword in ["$recursiveAnchor", "$recursiveRef"] where object[keyword] != nil {
+      emit(
+        pointer + "/" + keyword,
+        "Legacy \(keyword) is retained unchanged and has no recursion semantics in JSON Schema 2020-12. A branch containing only legacy keywords is unconstrained; oneOf can reject values matching another branch. This does not enable 2019-09 or repair recursive filters.",
+        .warning)
     }
     if object["format"]?.string == "binary" {
       emit(
