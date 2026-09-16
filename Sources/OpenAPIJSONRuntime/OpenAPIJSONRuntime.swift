@@ -107,16 +107,23 @@ public struct JSONResponse: Sendable {
 
   public func json(mediaTypes: [String] = ["application/json"]) throws -> JSONValue {
     guard !body.isEmpty else { throw JSONClientError.missingBody }
+    try Self.validateContentType(headers, mediaTypes: mediaTypes)
+    guard let text = String(bytes: body, encoding: .utf8) else {
+      throw JSONClientError.invalidUTF8
+    }
+    return try JSONValue.parse(text)
+  }
+
+  /// Checks JSON response headers without consuming a potentially streaming body.
+  public static func validateContentType(
+    _ headers: HTTPFields, mediaTypes: [String] = ["application/json"]
+  ) throws {
     let header = headers[.contentType]
     let mediaType = header?.split(separator: ";", maxSplits: 1).first?
       .trimmingCharacters(in: .whitespaces).lowercased()
     guard let mediaType, mediaTypes.contains(where: { $0.lowercased() == mediaType }) else {
       throw JSONClientError.unexpectedContentType(header)
     }
-    guard let text = String(bytes: body, encoding: .utf8) else {
-      throw JSONClientError.invalidUTF8
-    }
-    return try JSONValue.parse(text)
   }
 
   public func requireEmptyBody() throws {
@@ -214,15 +221,21 @@ public struct JSONClient: Sendable {
     )
   }
 
+  /// An optional response validator runs after transport headers arrive, before body iteration.
   public func send(
     _ operation: JSONOperation, path: [JSONParameter] = [], query: [JSONParameter] = [],
-    body: JSONValue? = nil, contentType: String = "application/json"
+    body: JSONValue? = nil, contentType: String = "application/json",
+    validateResponse: (@Sendable (HTTPResponse) throws -> Void)? = nil
   ) async throws -> JSONResponse {
     try Task.checkCancellation()
     let (request, requestBody) = try await prepare(
       operation, path: path, query: query, body: body, contentType: contentType)
     let (response, responseBody) = try await transport.send(
       request, body: requestBody, baseURL: serverURL, operationID: operation.id)
+    if let validateResponse {
+      try Task.checkCancellation()
+      try validateResponse(response)
+    }
     let bytes =
       try await responseBody.mapAsync {
         try await [UInt8](collecting: $0, upTo: maximumResponseBodyBytes)

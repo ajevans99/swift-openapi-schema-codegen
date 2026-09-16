@@ -1,0 +1,59 @@
+{
+  "openapi": "3.1.0",
+  "info": {"title": "Authored media profile fixture (not an OpenAI replacement)", "version": "1"},
+  "security": [{"Bearer": []}],
+  "paths": {
+    "/fallback": {
+      "get": {
+        "operationId": "fallbackMessage",
+        "responses": {
+          "default": {
+            "description": "Fallback",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Message"}}}
+          },
+          "204": {"description": "No body"}
+        }
+      }
+    },
+    "/messages": {
+      "post": {
+        "operationId": "createMessage",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {"schema": {"$ref": "#/components/schemas/Message"}},
+            "multipart/form-data": {"schema": {"type": "object", "properties": {"file": {"type": "string", "format": "binary"}}}}
+          }
+        },
+        "responses": {
+          "2XX": {
+            "description": "Other success",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Message"}}}
+          },
+          "200": {
+            "description": "Message",
+            "content": {
+              "application/json": {"schema": {"$ref": "#/components/schemas/Message"}},
+              "text/event-stream": {"schema": {"type": "string"}}
+            }
+          },
+          "204": {"description": "No body"}
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {"Bearer": {"type": "http", "scheme": "bearer"}},
+    "schemas": {
+      "Message": {
+        "type": "object",
+        "properties": {
+          "message-text": {"type": "string", "minLength": 1},
+          "stream": {"type": "boolean"}
+        },
+        "required": ["message-text"],
+        "additionalProperties": {}
+      }
+    }
+  }
+}

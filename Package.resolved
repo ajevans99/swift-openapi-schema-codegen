@@ -1,5 +1,5 @@
 {
-  "originHash" : "de5442b7c94327ccb5a75a2ddec3829caf650658bcb12a9ce6a3a428ca1b1253",
+  "originHash" : "ce0d863dd3ede7d301d317260eadc346a9b629a9de242069583921050302e1a5",
   "pins" : [
     {
       "identity" : "swift-argument-parser",
@@ -51,8 +51,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/ajevans99/swift-json-schema.git",
       "state" : {
-        "revision" : "88abaf2e821f55f7c3c04eb53385b3c0dd2fbf8f",
-        "version" : "0.14.0"
+        "revision" : "1514dd27fd55dbd36eec40c60e40ac8bfe0a22f4",
+        "version" : "0.14.1"
       }
     },
     {
@@ -60,7 +60,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/ajevans99/swift-json-schema-codegen.git",
       "state" : {
-        "revision" : "52e0d18170d10e02925622b86f8f8918a2ef7f8f"
+        "revision" : "2937926f4def9885ced02b31bcb0155248c612ef",
+        "version" : "0.3.0"
       }
     },
     {

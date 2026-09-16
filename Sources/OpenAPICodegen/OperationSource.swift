@@ -20,7 +20,8 @@ extension OpenAPICodeGenerator {
     guard errors.isEmpty else { throw OpenAPICodegenError(diagnostics: errors) }
     guard SwiftNames.allocate([options.namespace]) == [options.namespace],
       !["Self", "self", "Type", "Protocol", "JSONValue", "JSONClient", "HTTPFields"].contains(
-        options.namespace)
+        options.namespace),
+      options.profile == nil || !["RuntimeComponent", "HTTPResponse"].contains(options.namespace)
     else {
       throw OpenAPICodegenError(diagnostics: [
         .init(severity: .error, operationID: "", pointer: "", message: "Invalid Swift namespace.")
@@ -33,10 +34,7 @@ extension OpenAPICodeGenerator {
       logicalName: "openapi.json")
     let shared: GeneratedSharedSchemas
     do {
-      shared = try SchemaGenerator(
-        options: .init(
-          output: .models, recursiveObjects: options.recursiveObjects)
-      ).generateShared(
+      shared = try SchemaGenerator(options: modelGenerationOptions).generateShared(
         document: schemaDocument, schemaPointers: roots.map(\.pointer), rootNames: roots.map(\.name)
       )
     } catch let error as SchemaGenerationError {
@@ -58,7 +56,7 @@ extension OpenAPICodeGenerator {
       }
       """
     }.joined(separator: "\n")
-    let operations = result.operations.map(operationSource).joined(separator: "\n")
+    let operations = try result.operations.map(operationSource).joined(separator: "\n")
     let methods = result.operations.map { operation in
       """
       public func `\(operation.name)`(_ input: Operations.`\(operation.name)`.Input\(operation.parameters.isEmpty && operation.bodyRoot == nil ? " = .init()" : "")) async throws -> Operations.`\(operation.name)`.Output {
@@ -66,7 +64,7 @@ extension OpenAPICodeGenerator {
         let response = try await runtime.send(
           Operations.`\(operation.name)`.descriptor,
           path: prepared.path, query: prepared.query, body: prepared.body,
-          contentType: \(literal(operation.bodyMediaType ?? "application/json")))
+          contentType: \(literal(operation.bodyMediaType ?? "application/json"))\(operation.isProfiled ? ", validateResponse: Operations.`\(operation.name)`.validateResponseHeaders" : ""))
         return try Operations.`\(operation.name)`.decode(response)
       }
       """
@@ -111,7 +109,13 @@ extension OpenAPICodeGenerator {
       diagnostics: result.diagnostics)
   }
 
-  private func operationSource(_ operation: OperationPlan) -> String {
+  private var modelGenerationOptions: SchemaGenerationOptions {
+    .init(
+      output: .models, recursiveObjects: options.recursiveObjects,
+      unknownProperties: options.profile?.preserveUnknownFields == true ? .preserve : .discard)
+  }
+
+  private func operationSource(_ operation: OperationPlan) throws -> String {
     var fields = operation.parameters.map {
       (name: $0.field, type: "Models.`\($0.root)`", optional: !$0.view.required)
     }
@@ -150,6 +154,17 @@ extension OpenAPICodeGenerator {
     } else {
       bodyValue = "let body: JSONValue? = nil"
     }
+    let constraint: String
+    if let schema = operation.requestConstraint {
+      constraint = """
+        if let body {
+          _ = try RuntimeComponent(rawSchema: JSONValue.parse(\(literal(try schema.serialized()))))
+            .parseAndValidate(body)
+        }
+        """
+    } else {
+      constraint = ""
+    }
     let responseCases = operation.responses.map { response in
       var values: [String] = []
       if Int(response.view.status) == nil { values.append("status: Int") }
@@ -163,6 +178,7 @@ extension OpenAPICodeGenerator {
       }
       return order($0.view.status) < order($1.view.status)
     }
+    var headerCases: [String] = []
     var decoding = orderedResponses.map { response in
       let condition: String
       var values: [String] = []
@@ -178,10 +194,16 @@ extension OpenAPICodeGenerator {
       }
       let parsing: String
       if let root = response.root, let media = response.mediaType {
+        headerCases.append(
+          """
+          \(condition)
+            try JSONResponse.validateContentType(response.headerFields, mediaTypes: [\(literal(media))])
+          """)
         parsing =
           "let body = try Models.`\(root)Schema`.parseAndValidate(response.json(mediaTypes: [\(literal(media))]))"
         values.append("body: body")
       } else {
+        headerCases.append("\(condition) return")
         parsing = "try response.requireEmptyBody()"
       }
       values.append("headers: response.headers")
@@ -193,7 +215,17 @@ extension OpenAPICodeGenerator {
     }.joined(separator: "\n")
     if !operation.responses.contains(where: { $0.view.status == "default" }) {
       decoding += "\ndefault: throw JSONClientError.unexpectedStatus(response.status)"
+      headerCases.append("default: return")
     }
+    let headerValidation =
+      operation.isProfiled
+      ? """
+      public static func validateResponseHeaders(_ response: HTTPResponse) throws {
+        switch response.status.code {
+        \(headerCases.joined(separator: "\n"))
+        }
+      }
+      """ : ""
     let accepted = Array(Set(operation.responses.compactMap(\.mediaType))).sorted().map(literal)
       .joined(separator: ", ")
     return """
@@ -218,6 +250,7 @@ extension OpenAPICodeGenerator {
           \(operation.parameters.contains(where: { $0.view.location == "query" }) ? "var" : "let") query: [JSONParameter] = []
           \(parameterValues)
           \(bodyValue)
+          \(constraint)
           return (path, query, body)
         }
         public static func decode(_ response: JSONResponse) throws -> Output {
@@ -225,6 +258,7 @@ extension OpenAPICodeGenerator {
           \(decoding)
           }
         }
+        \(headerValidation)
       }
       """
   }

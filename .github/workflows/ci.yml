@@ -31,10 +31,13 @@ jobs:
         run: |
           swift --version
           swift test --jobs 4
+          python3 -m unittest discover -s Tests/OpenAPIClient -p 'test_*.py'
       - name: Fetch checksum-pinned acceptance corpus
         run: bash Tests/OpenAPIClient/fetch-openai.sh
       - name: Generate and run cross-module authored and OpenAI consumers
         run: bash Tests/OpenAPIClient/smoke.sh
+      - name: Generate and run bounded pristine Responses consumer
+        run: bash Tests/OpenAPIClient/responses.sh
       - name: Diagnose macOS consumer launch failure
         if: failure() && runner.os == 'macOS'
         run: |
@@ -73,5 +76,7 @@ jobs:
           name: compatibility-${{ matrix.os }}
           path: |
             .build/openapi-corpus/*compatibility.tsv
+            .build/openapi-corpus/responses-released-*.json
+            .build/openapi-corpus/responses-released-*.log
             .build/diagnostics/*.log
           if-no-files-found: ignore

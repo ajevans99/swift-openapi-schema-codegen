@@ -29,16 +29,24 @@ struct OpenAPICodegenCommand: ParsableCommand {
   @Option(help: "Generated Swift namespace.")
   var namespace = "API"
 
+  @Option(
+    help: "Path to an explicit version 1 JSON operation profile (does not modify the document).")
+  var profile: String?
+
   @Option(help: "Generated Swift destination. Required unless --report is selected.")
   var output: String?
 
   mutating func run() throws {
     let url = URL(fileURLWithPath: input)
     let document = try OpenAPIJSONDocument(data: Data(contentsOf: url), sourceURI: url)
+    let operationProfile = try profile.map {
+      try OpenAPIOperationProfile(source: String(contentsOfFile: $0, encoding: .utf8))
+    }
     let generator = OpenAPICodeGenerator(
       options: .init(
         namespace: namespace,
-        legacyNullable: legacyNullableAnnotationsOnly ? .annotationOnly : .reject))
+        legacyNullable: legacyNullableAnnotationsOnly ? .annotationOnly : .reject,
+        profile: operationProfile))
     if !report {
       guard let output else { throw ValidationError("Specify --output for generated Swift.") }
       let generated = try generator.generate(document, operationIDs: operation)

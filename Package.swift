@@ -2,6 +2,16 @@
 import Foundation
 import PackageDescription
 
+let genericCore: Package.Dependency
+if let path = ProcessInfo.processInfo.environment["JSON_SCHEMA_CODEGEN_PATH"] {
+  precondition(!path.isEmpty, "JSON_SCHEMA_CODEGEN_PATH must name a generic codegen checkout.")
+  genericCore = .package(name: "swift-json-schema-codegen", path: path)
+} else {
+  genericCore = .package(
+    url: "https://github.com/ajevans99/swift-json-schema-codegen.git",
+    from: "0.3.0")
+}
+
 let foundation: Package.Dependency
 if let path = ProcessInfo.processInfo.environment["OPENAPI_SCHEMA_PATH"] {
   precondition(!path.isEmpty, "OPENAPI_SCHEMA_PATH must name an importer checkout.")
@@ -10,6 +20,16 @@ if let path = ProcessInfo.processInfo.environment["OPENAPI_SCHEMA_PATH"] {
   foundation = .package(
     url: "https://github.com/ajevans99/swift-openapi-schema.git",
     from: "0.2.0")
+}
+
+let schemaRuntime: Package.Dependency
+if let path = ProcessInfo.processInfo.environment["JSON_SCHEMA_RUNTIME_PATH"] {
+  precondition(!path.isEmpty, "JSON_SCHEMA_RUNTIME_PATH must name a JSON Schema runtime checkout.")
+  schemaRuntime = .package(name: "swift-json-schema", path: path)
+} else {
+  schemaRuntime = .package(
+    url: "https://github.com/ajevans99/swift-json-schema.git",
+    from: "0.14.1")
 }
 
 let package = Package(
@@ -24,11 +44,9 @@ let package = Package(
     .executable(name: "openapi-json-codegen", targets: ["OpenAPICodegenCLI"]),
   ],
   dependencies: [
-    .package(
-      url: "https://github.com/ajevans99/swift-json-schema-codegen.git",
-      revision: "52e0d18170d10e02925622b86f8f8918a2ef7f8f"),
+    genericCore,
     foundation,
-    .package(url: "https://github.com/ajevans99/swift-json-schema.git", from: "0.14.0"),
+    schemaRuntime,
     .package(url: "https://github.com/apple/swift-openapi-runtime.git", from: "1.12.1"),
     .package(url: "https://github.com/apple/swift-http-types.git", from: "1.5.1"),
     .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.8.2"),
