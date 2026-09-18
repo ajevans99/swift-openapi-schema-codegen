@@ -9,7 +9,7 @@ if let path = ProcessInfo.processInfo.environment["JSON_SCHEMA_CODEGEN_PATH"] {
 } else {
   genericCore = .package(
     url: "https://github.com/ajevans99/swift-json-schema-codegen.git",
-    from: "0.3.0")
+    .upToNextMinor(from: "0.3.0"))
 }
 
 let foundation: Package.Dependency
